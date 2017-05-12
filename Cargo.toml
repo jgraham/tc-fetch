@@ -1,0 +1,10 @@
+[package]
+name = "fetchlogs"
+version = "0.1.0"
+authors = ["James Graham <james@hoppipolla.co.uk>"]
+
+[dependencies]
+reqwest = "0.5"
+clap = "2"
+serde_json = "0.9"
+scoped_threadpool = "0.1"
