@@ -3,9 +3,9 @@ extern crate reqwest;
 extern crate serde_json;
 extern crate scoped_threadpool;
 
-use std::fs::File;
+use std::fs::{File, rename};
 use std::io::BufWriter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
 use std::io::{copy, Read};
 use clap::{App, Arg};
@@ -77,20 +77,12 @@ fn get_log_url(client: &reqwest::Client, job_guid: &str) -> Option<String> {
                             .map(|x| x.to_string())))
 }
 
-fn download(client: &reqwest::Client, platform: &str, url: &str) {
-    let mut counter = 0;
-    let mut name;
-    loop {
-        name = PathBuf::from(format!("{}-{}.log", platform, counter));
-        if !name.exists() {
-            break
-        }
-        counter = counter + 1;
-    };
-
-    let mut dest = BufWriter::new(File::create(name).unwrap());
+fn download(client: &reqwest::Client, name: &Path, url: &str) {
+    let tmp_name = name.with_extension("tmp");
+    let mut dest = BufWriter::new(File::create(&tmp_name).unwrap());
     let mut resp = client.get(url).send().unwrap();
     copy(&mut resp, &mut dest).unwrap();
+    rename(&tmp_name, &name).unwrap();
 }
 
 fn fetch_job_logs(client: &reqwest::Client, jobs: Vec<Value>) {
@@ -118,13 +110,16 @@ fn fetch_job_logs(client: &reqwest::Client, jobs: Vec<Value>) {
                 .and_then(|x| x.as_str())
                 .map(|x| x.to_string())
                 .expect("Invariant: platform must be defined for job");
-            scope.execute(move || {
-                let log_url = get_log_url(&client, &*job_guid);
-                println!("{} {} {:?}", platform, job_guid, log_url);
-                if let Some(url) = log_url {
-                    download(&client, &*platform, &*url);
-                }
-            });
+            let name = PathBuf::from(format!("{}-{}.log", platform, job_guid.replace("/", "-")));
+            if !name.exists() {
+                scope.execute(move || {
+                    let log_url = get_log_url(&client, &*job_guid);
+                    println!("{} {} {:?}", platform, job_guid, log_url);
+                    if let Some(url) = log_url {
+                        download(&client, &name, &*url);
+                    }
+                });
+            }
         }
     })
 }
