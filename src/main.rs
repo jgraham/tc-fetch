@@ -79,6 +79,11 @@ fn get_result_set(client: &reqwest::Client, branch: &str, commit: &str) -> reqwe
     let body = BTreeMap::new();
     let data = get_json(client, &*th_url(format!("/api/project/{}/resultset/?revision={}", branch, commit)), Some(&body))?;
 
+    if data["results"][0].is_null() {
+        println!("Resultset {} couldn't be found, did you type it correctly?", commit);
+        process::exit(1)
+    }
+
     Ok(data.pointer("/results/0/id")
        .and_then(|x| x.as_u64())
        .unwrap())
