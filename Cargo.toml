@@ -2,6 +2,7 @@
 name = "fetchlogs"
 version = "0.1.0"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
+readme = "readme.md"
 
 [dependencies]
 reqwest = "0.5"
