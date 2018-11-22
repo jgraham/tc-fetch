@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate clap;
 extern crate reqwest;
+#[cfg_attr(test, macro_use)]
 extern crate serde_json;
 extern crate scoped_threadpool;
 
@@ -242,4 +243,36 @@ fn main() {
     }
     let jobs = get_jobs(&client, branch, result_set_id, Some("completed".into())).unwrap();
     fetch_job_logs(&client, &out_dir, jobs, log_type);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_wpt_job() {
+        // job1 is a slimmed down version of a decision task, filter_wpt_job
+        let job1 = json!({
+            "job_type_id":6689,
+            "job_type_name":"Gecko Decision Task",
+            "job_type_symbol":"D",
+            "who":"user@email.com"
+        });
+
+        // job2 is a slimmed down version of a wpt test
+        let job2 = json!({
+            "job_type_id":105958,
+            "job_type_name":"test-linux64-qr/opt-web-platform-tests-reftests-e10s-2",
+            "job_type_symbol":"Wr2",
+            "who":"user@email.com"
+        });
+        assert_eq!(false, filter_wpt_job(&job1), "Make sure non-wpt jobs are filtered out");
+        assert_eq!(true, filter_wpt_job(&job2), "Make sure wpt jobs are not filtered out");
+    }
+
+    #[test]
+    fn test_th_url() {
+        assert_eq!("https://treeherder.mozilla.org/api/project/try/resultset/?revision=1234567890ab",
+                   th_url(format!("/api/project/{}/resultset/?revision={}", "try", "1234567890ab")));
+    }
 }
