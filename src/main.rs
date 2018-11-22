@@ -68,6 +68,13 @@ fn th_url(path: String) -> String {
     format!("{}{}", TREEHERDER_BASE, path).into()
 }
 
+fn commit_is_valid(commit: &str) -> bool {
+    if commit.len() < 12 || commit.len() > 40 {
+        return false;
+    }
+    return true;
+}
+
 fn check_status(resp: &reqwest::Response) -> reqwest::Result<()> {
     if resp.status().is_success() {
         return Ok(())
@@ -222,6 +229,11 @@ fn main() {
     let commit = matches.value_of("commit").unwrap();
     let log_type = value_t_or_exit!(matches, "log_type", LogType);
 
+    if !commit_is_valid(&commit) {
+        println!("Commit `{}` needs to be between 12 and 40 characters in length", commit);
+        process::exit(1);
+    }
+
     let cur_dir = env::current_dir().expect("Invalid working directory");
     let out_dir: PathBuf = if let Some(dir) = matches.value_of("out_dir") {
         cur_dir.join(dir)
@@ -230,7 +242,7 @@ fn main() {
     };
     if !out_dir.is_dir() {
         println!("{} is not a directory", out_dir.display());
-        process::exit(1)
+        process::exit(1);
     }
 
     let client = reqwest::Client::new().unwrap();
