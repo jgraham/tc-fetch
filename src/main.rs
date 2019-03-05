@@ -58,10 +58,10 @@ fn get_json(client: &reqwest::Client, url: &str, body: Option<&BTreeMap<&str, Va
         req = req.json(body)
     };
     let mut resp = req.send()?;
-    check_status(&resp)?;
+    resp.error_for_status_ref()?;
     let mut resp_body = String::new();
     resp.read_to_string(&mut resp_body).unwrap();
-    let data: Value = serde_json::from_str(&*resp_body)?;
+    let data: Value = serde_json::from_str(&*resp_body).unwrap();
     Ok(data)
 }
 
@@ -76,16 +76,9 @@ fn commit_is_valid(commit: &str) -> bool {
     return true;
 }
 
-fn check_status(resp: &reqwest::Response) -> reqwest::Result<()> {
-    if resp.status().is_success() {
-        return Ok(())
-    }
-    Err(reqwest::Error::Http(reqwest::HyperError::Status))
-}
-
 fn get_result_set(client: &reqwest::Client, branch: &str, commit: &str) -> reqwest::Result<u64> {
     let body = BTreeMap::new();
-    let data = get_json(client, &*th_url(format!("/api/project/{}/resultset/?revision={}", branch, commit)), Some(&body))?;
+    let data = get_json(client, &*th_url(format!("/api/project/{}/push/?revision={}", branch, commit)), Some(&body))?;
 
     Ok(data.pointer("/results/0/id")
        .and_then(|x| x.as_u64())
@@ -246,7 +239,7 @@ fn main() {
         process::exit(1);
     }
 
-    let client = reqwest::Client::new().unwrap();
+    let client = reqwest::Client::new();
     let result_set_id = get_result_set(&client, branch, commit).unwrap();
     if matches.is_present("check_complete") {
         if !(wpt_complete(&client, branch, result_set_id)) {
