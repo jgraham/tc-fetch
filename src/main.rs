@@ -113,12 +113,12 @@ fn get_log_url(client: &reqwest::Client, job_guid: &str, name: &str) -> Option<S
                             .map(|x| x.to_string())))
 }
 
-fn download(client: &reqwest::Client, out_dir: &Path, name: &Path, url: &str) {
-    let tmp_name = out_dir.join(name.with_extension("tmp"));
+fn download(client: &reqwest::Client, name: &Path, url: &str) {
+    let tmp_name = name.with_extension("tmp");
     let mut dest = BufWriter::new(File::create(&tmp_name).unwrap());
     let mut resp = client.get(url).send().unwrap();
     copy(&mut resp, &mut dest).unwrap();
-    rename(&tmp_name, out_dir.join(name)).unwrap();
+    rename(&tmp_name, name).unwrap();
 }
 
 fn filter_wpt_job(job: &Value) -> bool {
@@ -153,15 +153,19 @@ fn fetch_job_logs(client: &reqwest::Client, out_dir: &Path, jobs: Vec<Value>, lo
                 .and_then(|x| x.as_str())
                 .map(|x| x.to_string())
                 .expect("Invariant: platform must be defined for job");
-            let name = PathBuf::from(format!("{}-{}.log", platform, job_guid.replace("/", "-")));
-            if !name.exists() {
+            let mut path = PathBuf::from(out_dir);
+            let name = format!("{}-{}.log", platform, job_guid.replace("/", "-"));
+            path.push(name);
+            if !path.exists() {
                 scope.execute(move || {
                     let log_url = get_log_url(&client, &*job_guid, file_name);
                     println!("{} {} {:?}", platform, job_guid, log_url);
                     if let Some(url) = log_url {
-                        download(&client, out_dir, &name, &*url);
+                        download(&client, &path, &*url);
                     }
                 });
+            } else {
+                println!("Log for {} exists locally, skipping", job_guid);
             }
         }
     })
