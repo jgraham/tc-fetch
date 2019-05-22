@@ -1,72 +1,248 @@
 #[macro_use]
 extern crate clap;
 extern crate reqwest;
-#[cfg_attr(test, macro_use)]
-extern crate serde_json;
 extern crate scoped_threadpool;
+use serde::de::{DeserializeOwned};
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 
 use clap::{App, Arg};
-use serde_json::value::Value;
-use std::collections::BTreeMap;
 use std::env;
-use std::fs::{File, rename};
-use std::io::BufWriter;
-use std::io::{copy, Read};
+use std::fs::{rename, File};
+use std::io::{self, copy, BufWriter, Read};
 use std::path::{Path, PathBuf};
 use std::process;
 
-static TREEHERDER_BASE: &str = "https://treeherder.mozilla.org";
+static INDEX_BASE: &str = "https://index.taskcluster.net/v1/";
+static QUEUE_BASE: &str = "https://queue.taskcluster.net/v1/";
 
-arg_enum!{
-    #[derive(Clone, Debug)]
-    pub enum LogType {
+arg_enum! {
+    #[derive(Clone, Copy, Debug)]
+    enum LogFormat {
         Raw,
-        WptReport
+        WptReport,
     }
 }
 
 fn parse_args<'a, 'b>() -> App<'a, 'b> {
     App::new("Treeherder log fetcher")
-        .arg(Arg::with_name("check_complete")
-             .long("--check-complete")
-             .required(false)
-             .help("Check if there are any pending wpt jobs and exit with code 1 if there are"))
-        .arg(Arg::with_name("out_dir")
-             .long("--out-dir")
-             .takes_value(true)
-             .required(false)
-             .help("Directory in which to put output files"))
-        .arg(Arg::with_name("log_type")
-             .long("--log-type")
-             .possible_values(&["raw", "wptreport"])
-             .default_value("raw")
-             .takes_value(true)
-             .help("Log type to fetch. raw or wptreport"))
-        .arg(Arg::with_name("branch")
-             .required(true)
-             .index(1)
-             .help("Branch on which jobs ran"))
-        .arg(Arg::with_name("commit")
-             .required(true)
-             .index(2)
-             .help("Commit hash for push"))
+        .arg(
+            Arg::with_name("check_complete")
+                .long("--check-complete")
+                .required(false)
+                .help("Check if there are any pending wpt jobs and exit with code 1 if there are"),
+        )
+        .arg(
+            Arg::with_name("out_dir")
+                .long("--out-dir")
+                .takes_value(true)
+                .required(false)
+                .help("Directory in which to put output files"),
+        )
+        .arg(
+            Arg::with_name("log_format")
+                .long("--log-format")
+                .possible_values(&["raw", "wptreport"])
+                .default_value("wptreport")
+                .takes_value(true)
+                .help("Log type to fetch. raw or wptreport"),
+        )
+        .arg(
+            Arg::with_name("branch")
+                .required(true)
+                .index(1)
+                .help("Branch on which jobs ran"),
+        )
+        .arg(
+            Arg::with_name("commit")
+                .required(true)
+                .index(2)
+                .help("Commit hash for push"),
+        )
 }
 
-fn get_json(client: &reqwest::Client, url: &str, body: Option<&BTreeMap<&str, Value>>) -> reqwest::Result<Value> {
-    let mut req = client.get(url);
-    if let Some(body) = body {
-        req = req.json(body)
-    };
+#[derive(Debug, Deserialize)]
+struct RevisionResponse {
+    node: String,
+    desc: String,
+    user: String,
+    parents: Vec<String>,
+    phase: String,
+    pushid: u64,
+    pushuser: String,
+}
+
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TaskState {
+    Unscheduled,
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Exception,
+}
+
+impl TaskState {
+    fn is_complete(&self) -> bool {
+        match self {
+            TaskState::Unscheduled | TaskState::Pending | TaskState::Running => false,
+            TaskState::Completed | TaskState::Failed | TaskState::Exception => true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct IndexResponse {
+    namespace: String,
+    taskId: String,
+    rank: u64,
+    expires: String
+}
+
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct ArtifactsResponse {
+    artifacts: Vec<Artifact>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct Artifact {
+    storageType: String,
+    name: String,
+    expires: String,
+    contentType: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct TaskGroupResponse {
+    taskGroupId: String,
+    tasks: Vec<TaskGroupTask>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct TaskGroupTask {
+    status: TaskGroupTaskStatus,
+    task: Task,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct TaskGroupTaskStatus {
+    taskId: String,
+    provisionerId: String,
+    workerType: String,
+    schedulerId: String,
+    taskGroupId: String,
+    deadline: String, // Should be a time type
+    expires: String,  // Should be a time type
+    retriesLeft: u64,
+    state: TaskState,
+    runs: Vec<TaskRun>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct TaskRun {
+    runId: u64,
+    state: TaskState,
+    reasonCreated: String,  // Should be an enum
+    reasonResolved: String, // Should be an enum
+    workerGroup: String,
+    workerId: String,
+    takenUntil: String, // Should be a time type
+    scheduled: String,  // Should be a time type
+    started: String,    // Should be a time type
+    resolved: String,   // Should be a time type
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct Task {
+    provisionerId: String,
+    workerType: String,
+    schedulerId: String,
+    taskGroupId: String,
+    metadata: TaskMetadata, // Blah
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct TaskMetadata {
+    owner: String,
+    source: String,
+    description: String,
+    name: String,
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+enum Error {
+    Reqwest(reqwest::Error),
+    Serde(serde_json::Error),
+    Io(io::Error),
+    String(String)
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Error {
+        Error::Reqwest(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Error {
+        Error::Serde(error)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Error {
+        Error::Io(error)
+    }
+}
+
+impl LogFormat {
+    fn path_suffix(&self) -> String {
+        format!("/{}", self.file_name())
+    }
+
+    fn file_name(&self) -> &'static str {
+        match self {
+            LogFormat::Raw => "wpt_raw.log",
+            LogFormat::WptReport => "wptreport.json",
+        }
+    }
+}
+
+fn get_json<T>(client: &reqwest::Client, url: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    // TODO - If there's a list then support continuationToken
+    println!("{}", url);
+    let req = client.get(url);
     let mut resp = req.send()?;
     resp.error_for_status_ref()?;
-    let mut resp_body = String::new();
-    resp.read_to_string(&mut resp_body).unwrap();
-    let data: Value = serde_json::from_str(&*resp_body).unwrap();
+    let mut resp_body = match resp.content_length() {
+        Some(len) => String::with_capacity(len as usize),
+        None => String::new()
+    };
+    resp.read_to_string(&mut resp_body)?;
+    let data: T = serde_json::from_str(&resp_body)?;
     Ok(data)
 }
 
-fn th_url(path: String) -> String {
-    format!("{}{}", TREEHERDER_BASE, path).into()
+fn url(base: &str, path: &str) -> String {
+    format!("{}{}", base, path).into()
 }
 
 fn commit_is_valid(commit: &str) -> bool {
@@ -76,41 +252,39 @@ fn commit_is_valid(commit: &str) -> bool {
     return true;
 }
 
-fn get_result_set(client: &reqwest::Client, branch: &str, commit: &str) -> reqwest::Result<u64> {
-    let body = BTreeMap::new();
-    let data = get_json(client, &*th_url(format!("/api/project/{}/push/?revision={}", branch, commit)), Some(&body))?;
+fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
+    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", branch, commit);
 
-    Ok(data.pointer("/results/0/id")
-       .and_then(|x| x.as_u64())
-       .unwrap())
+    Ok(get_json(client, &url_)?)
 }
 
-fn get_jobs(client: &reqwest::Client, branch: &str, result_set_id: u64, state: Option<String>) -> reqwest::Result<Vec<Value>> {
-    let body = BTreeMap::new();
-    let mut url = format!("/api/project/{}/jobs/?result_set_id={}&count=2000&exclusion_profile=false", branch, result_set_id);
-    if let Some(state) = state {
-        url = format!("{}&state={}", url, state)
-    }
-    let data = get_json(client, &*th_url(url), Some(&body))?;
-    Ok(data.pointer("/results").and_then(|x| x.as_array()).map(|x| x.clone()).unwrap())
+fn get_taskgroup(
+    client: &reqwest::Client,
+    branch: &str,
+    commit: &str,
+) -> Result<IndexResponse> {
+    let index = format!("gecko.v2.{}.revision.{}.firefox.decision", branch, commit);
+    Ok(get_json(
+        client,
+        &url(INDEX_BASE, &format!("task/{}", index)),
+    )?)
 }
 
-fn get_log_url(client: &reqwest::Client, job_guid: &str, name: &str) -> Option<String> {
-    let body = BTreeMap::new();
+fn get_taskgroup_tasks(client: &reqwest::Client, taskgroup_id: &str) -> Result<TaskGroupResponse> {
+    let url_suffix = format!("task-group/{}/list", taskgroup_id);
 
-    get_json(client, &*th_url(format!("/api/jobdetail/?job_guid={}", job_guid)), Some(&body))
-        .ok()
-        .and_then(|x| x.get("results")
-                  .and_then(|x|x.as_array())
-                  .and_then(|x| x.iter()
-                            .find(|x| x.get("value")
-                                  .and_then(|x| x.as_str())
-                                  .map(|x| x == name)
-                                  .unwrap_or(false)))
-                  .and_then(|x| x
-                            .get("url")
-                            .and_then(|x| x.as_str())
-                            .map(|x| x.to_string())))
+    Ok(get_json(client, &url(QUEUE_BASE, &url_suffix))?)
+}
+
+fn get_artifacts(client: &reqwest::Client, task_id: &str) -> Result<Vec<Artifact>> {
+    let url_suffix = format!("task/{}/artifacts", task_id);
+    let artifacts: ArtifactsResponse = get_json(client, &*url(QUEUE_BASE, &url_suffix))?;
+    Ok(artifacts.artifacts)
+}
+
+fn get_log_url(task_id: &str, artifact: &Artifact) -> String {
+    let task_url = format!("task/{}/artifacts", task_id);
+    url(QUEUE_BASE, &format!("{}/{}", &task_url, artifact.name))
 }
 
 fn download(client: &reqwest::Client, name: &Path, url: &str) {
@@ -121,115 +295,68 @@ fn download(client: &reqwest::Client, name: &Path, url: &str) {
     rename(&tmp_name, name).unwrap();
 }
 
-fn filter_wpt_job(job: &Value) -> bool {
-    let name = job.get("job_type_name")
-        .and_then(|x| x.as_str());
-    if name.is_none() {
-        return false
-    }
-    let name = name.expect("Invariant: name is not None");
-    if !(name.starts_with("W3C Web Platform") ||
-         (name.starts_with("test-") &&
-          name.contains("-web-platform-tests-"))) {
-        return false
-    }
-    return true
-}
-
-fn fetch_job_logs(client: &reqwest::Client, out_dir: &Path, jobs: Vec<Value>, log_type: LogType) {
+fn fetch_job_logs(
+    client: &reqwest::Client,
+    out_dir: &Path,
+    tasks: Vec<TaskGroupTask>,
+    log_format: LogFormat,
+) {
     let mut pool = scoped_threadpool::Pool::new(8);
-    let file_name = match log_type {
-        LogType::Raw => "wpt_raw.log",
-        LogType::WptReport => "wptreport.json"
-    };
     pool.scoped(|scope| {
-        for job in jobs.iter().filter(|e| filter_wpt_job(e)) {
-            let job_guid = job.get("job_guid")
-                .and_then(|x| x.as_str())
-                .map(|x| x.to_string()) // Seems we borrow for the entire |scope|
-                .expect("Invariant: job_guid is not None");
+        for task in tasks {
+            let task_id = task.status.taskId.clone();
             let client = client.clone();
-            let platform = job.get("platform")
-                .and_then(|x| x.as_str())
-                .map(|x| x.to_string())
-                .expect("Invariant: platform must be defined for job");
-            let mut path = PathBuf::from(out_dir);
-            let name = format!("{}-{}.log", platform, job_guid.replace("/", "-"));
-            path.push(name);
-            if !path.exists() {
+            let name = PathBuf::from(format!(
+                "{}-{}-{}",
+                task.task.metadata.name.replace("/", "-"),
+                &task.status.taskId,
+                log_format.file_name()
+            ));
+            let dest = out_dir.join(&name);
+            if !dest.exists() {
                 scope.execute(move || {
-                    let log_url = get_log_url(&client, &*job_guid, file_name);
-                    println!("{} {} {:?}", platform, job_guid, log_url);
-                    if let Some(url) = log_url {
-                        download(&client, &path, &*url);
+                    let artifacts = get_artifacts(&client, &task_id).unwrap();
+                    let artifact = artifacts
+                        .iter()
+                        .find(|&artifact| is_wpt_artifact(artifact, log_format));
+                    if let Some(artifact) = artifact {
+                        let log_url = get_log_url(&task_id, &artifact);
+                        println!("Downloading {} to {}", log_url, dest.to_string_lossy());
+                        download(&client, &dest, &log_url);
                     }
                 });
             } else {
-                println!("Log for {} exists locally, skipping", job_guid);
+                println!("{} exists locally, skipping", dest.to_string_lossy());
             }
         }
     })
 }
 
-fn get_decision(client: &reqwest::Client, branch: &str, result_set_id: u64) -> reqwest::Result<Value> {
-    let url = th_url(format!("/api/project/{}/jobs/?result_set_id={}&count=10&exclusion_profile=false&job_type_name=Gecko+Decision+Task", branch, result_set_id));
-    let data = get_json(client, &url, None)?;
-    let results = data.pointer("/results").and_then(|x| x.as_array()).unwrap();
-    if results.len() > 1 {
-        panic!("Got multiple decision tasks");
-    }
-    Ok(results.get(0).expect("No decision task found").clone())
+fn is_wpt_artifact(artifact: &Artifact, format: LogFormat) -> bool {
+    return artifact.name.ends_with(&format.path_suffix());
 }
 
-fn get_task_graph(client: &reqwest::Client, job_guid: &str) -> reqwest::Result<Value> {
-    let task_graph_url = get_log_url(client, job_guid, "task-graph.json").unwrap();
-    get_json(client, &task_graph_url, None)
+fn is_wpt_task(task: &TaskGroupTask) -> bool {
+    let name = &task.task.metadata.name;
+    name.contains("-web-platform-tests-") || name.starts_with("spidermonkey")
 }
 
-fn wpt_complete(client: &reqwest::Client, branch: &str, result_set_id: u64) -> bool {
-    // This is assuming that the job has at least started
-    let decision_result = get_decision(client, branch, result_set_id);
-    if decision_result.is_err() {
-        println!("No decision task found");
-        return false
-    }
-    let decision = decision_result.unwrap();
-    if !decision.get("state").map(|x| x == "completed").unwrap_or(false) {
-        println!("Decision task not complete");
-        return false
-    }
-    let job_guid = decision.get("job_guid").and_then(|x| x.as_str()).expect("Invariant: Decision task must have a job_guid");
-    if let Ok(task_graph) = get_task_graph(client, job_guid) {
-        if task_graph.as_object().unwrap().iter()
-            .filter(|&(_, task)| {
-                task.pointer("/attributes/unittest_suite").map(|x| x == "web-platform-tests").unwrap_or(false)
-            }).count() == 0 {
-                // Task is trivially done since there are no wpt jobs (assuming everything is on TC)
-                println!("No wpt jobs scheduled");
-                return true
-            }
-    } else {
-        println!("Failed to fetch task graph");
-        return false
-    }
-
-    let pending_jobs = get_jobs(client, branch, result_set_id, Some("pending".into())).unwrap();
-    if pending_jobs.iter().filter(|e| filter_wpt_job(e)).count() > 0 {
-        println!("wpt jobs still pending");
-        return false
-    }
-    true
+fn wpt_complete<'a, I>(mut tasks: I) -> bool
+where
+    I: Iterator<Item = &'a TaskGroupTask>,
+{
+    tasks.all(|task| task.status.state.is_complete())
 }
 
-fn main() {
+fn run() -> Result<()> {
     let matches = parse_args().get_matches();
     let branch = matches.value_of("branch").unwrap();
     let commit = matches.value_of("commit").unwrap();
-    let log_type = value_t_or_exit!(matches, "log_type", LogType);
+    let log_format = value_t_or_exit!(matches, "log_format", LogFormat);
 
     if !commit_is_valid(&commit) {
-        println!("Commit `{}` needs to be between 12 and 40 characters in length", commit);
-        process::exit(1);
+        return Err(Error::String(
+            "Commit `{}` needs to be between 12 and 40 characters in length".into()))
     }
 
     let cur_dir = env::current_dir().expect("Invalid working directory");
@@ -239,49 +366,34 @@ fn main() {
         cur_dir
     };
     if !out_dir.is_dir() {
-        println!("{} is not a directory", out_dir.display());
-        process::exit(1);
+        return Err(Error::String(format!("{} is not a directory", out_dir.display())))
     }
 
     let client = reqwest::Client::new();
-    let result_set_id = get_result_set(&client, branch, commit).unwrap();
+
+    let commit = get_revision(&client, &branch, &commit)?.node;
+
+    let taskgroup = get_taskgroup(&client, &branch, &commit)?;
+
+    let tasks = get_taskgroup_tasks(&client, &taskgroup.taskId)?;
+    let wpt_tasks: Vec<TaskGroupTask> = tasks.tasks.into_iter().filter(|task| is_wpt_task(task)).collect();
+
     if matches.is_present("check_complete") {
-        if !(wpt_complete(&client, branch, result_set_id)) {
-            process::exit(1);
+        if !wpt_complete(wpt_tasks.iter()) {
+            return Err(Error::String("wpt tasks are not yet complete".into()))
         }
     }
-    let jobs = get_jobs(&client, branch, result_set_id, Some("completed".into())).unwrap();
-    fetch_job_logs(&client, &out_dir, jobs, log_type);
+
+    fetch_job_logs(&client, &out_dir, wpt_tasks, log_format);
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_filter_wpt_job() {
-        // job1 is a slimmed down version of a decision task, filter_wpt_job
-        let job1 = json!({
-            "job_type_id":6689,
-            "job_type_name":"Gecko Decision Task",
-            "job_type_symbol":"D",
-            "who":"user@email.com"
-        });
-
-        // job2 is a slimmed down version of a wpt test
-        let job2 = json!({
-            "job_type_id":105958,
-            "job_type_name":"test-linux64-qr/opt-web-platform-tests-reftests-e10s-2",
-            "job_type_symbol":"Wr2",
-            "who":"user@email.com"
-        });
-        assert_eq!(false, filter_wpt_job(&job1), "Make sure non-wpt jobs are filtered out");
-        assert_eq!(true, filter_wpt_job(&job2), "Make sure wpt jobs are not filtered out");
-    }
-
-    #[test]
-    fn test_th_url() {
-        assert_eq!("https://treeherder.mozilla.org/api/project/try/resultset/?revision=1234567890ab",
-                   th_url(format!("/api/project/{}/resultset/?revision={}", "try", "1234567890ab")));
+fn main() {
+    match run() {
+        Ok(()) => {},
+        Err(e) => {
+            println!("{:?}", e);
+            process::exit(1);
+        }
     }
 }
