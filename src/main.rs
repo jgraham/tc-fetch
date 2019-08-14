@@ -154,13 +154,13 @@ struct TaskRun {
     runId: u64,
     state: TaskState,
     reasonCreated: String,  // Should be an enum
-    reasonResolved: String, // Should be an enum
-    workerGroup: String,
-    workerId: String,
-    takenUntil: String, // Should be a time type
+    reasonResolved: Option<String>, // Should be an enum
+    workerGroup: Option<String>,
+    workerId: Option<String>,
+    takenUntil: Option<String>, // Should be a time type
     scheduled: String,  // Should be a time type
-    started: String,    // Should be a time type
-    resolved: String,   // Should be a time type
+    started: Option<String>,    // Should be a time type
+    resolved: Option<String>,   // Should be a time type
 }
 
 #[derive(Debug, Deserialize)]
