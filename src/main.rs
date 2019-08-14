@@ -253,7 +253,14 @@ fn commit_is_valid(commit: &str) -> bool {
 }
 
 fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
-    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", branch, commit);
+    let path = match branch {
+        "autoland" => "integration/autoland",
+        "mozilla-beta" => "releases/mozilla-beta",
+        "mozilla-inbound" => "integration/mozilla-inbound",
+        "mozilla-release" => "releases/mozilla-release",
+        _ => branch
+    };
+    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", path, commit);
 
     Ok(get_json(client, &url_)?)
 }
