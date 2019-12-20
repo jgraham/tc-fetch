@@ -15,9 +15,6 @@ use std::io::{self, copy, BufWriter, Read};
 use std::path::{Path, PathBuf};
 use std::process;
 
-static INDEX_BASE: &str = "https://index.taskcluster.net/v1/";
-static QUEUE_BASE: &str = "https://queue.taskcluster.net/v1/";
-
 arg_enum! {
     #[derive(Clone, Copy, Debug)]
     enum LogFormat {
@@ -48,6 +45,13 @@ fn parse_args<'a, 'b>() -> App<'a, 'b> {
                 .default_value("wptreport")
                 .takes_value(true)
                 .help("Log type to fetch. raw or wptreport"),
+        )
+        .arg(
+            Arg::with_name("taskcluster_url")
+                .long("--taskcluster-url")
+                .default_value("https://firefox-ci-tc.services.mozilla.com")
+                .takes_value(true)
+                .help("Base url of the taskcluster instance"),
         )
         .arg(
             Arg::with_name("branch")
@@ -158,7 +162,7 @@ struct TaskRun {
     workerGroup: Option<String>,
     workerId: Option<String>,
     takenUntil: Option<String>, // Should be a time type
-    scheduled: String,  // Should be a time type
+    scheduled: Option<String>,  // Should be a time type
     started: Option<String>,    // Should be a time type
     resolved: Option<String>,   // Should be a time type
 }
@@ -252,46 +256,51 @@ fn commit_is_valid(commit: &str) -> bool {
     return true;
 }
 
-fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
-    let path = match branch {
-        "autoland" => "integration/autoland",
+fn hg_path(branch: &str) -> &'static str {
+    match branch {
+        "try" => "try",
         "mozilla-beta" => "releases/mozilla-beta",
+        "mozilla-central" => "mozilla-central",
         "mozilla-inbound" => "integration/mozilla-inbound",
-        "mozilla-release" => "releases/mozilla-release",
-        _ => branch
-    };
-    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", path, commit);
+        "autoland" => "integration/autoland",
+        _ => panic!(format!("Unknown branch {}", branch))
+    }
+}
+
+fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
+    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", hg_path(branch), commit);
 
     Ok(get_json(client, &url_)?)
 }
 
 fn get_taskgroup(
     client: &reqwest::Client,
+    taskcluster_urls: &TaskclusterUrls,
     branch: &str,
     commit: &str,
 ) -> Result<IndexResponse> {
     let index = format!("gecko.v2.{}.revision.{}.firefox.decision", branch, commit);
     Ok(get_json(
         client,
-        &url(INDEX_BASE, &format!("task/{}", index)),
+        &url(&taskcluster_urls.index_base, &format!("task/{}", index)),
     )?)
 }
 
-fn get_taskgroup_tasks(client: &reqwest::Client, taskgroup_id: &str) -> Result<TaskGroupResponse> {
+fn get_taskgroup_tasks(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, taskgroup_id: &str) -> Result<TaskGroupResponse> {
     let url_suffix = format!("task-group/{}/list", taskgroup_id);
 
-    Ok(get_json(client, &url(QUEUE_BASE, &url_suffix))?)
+    Ok(get_json(client, &url(&taskcluster_urls.queue_base, &url_suffix))?)
 }
 
-fn get_artifacts(client: &reqwest::Client, task_id: &str) -> Result<Vec<Artifact>> {
+fn get_artifacts(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, task_id: &str) -> Result<Vec<Artifact>> {
     let url_suffix = format!("task/{}/artifacts", task_id);
-    let artifacts: ArtifactsResponse = get_json(client, &*url(QUEUE_BASE, &url_suffix))?;
+    let artifacts: ArtifactsResponse = get_json(client, &*url(&taskcluster_urls.queue_base, &url_suffix))?;
     Ok(artifacts.artifacts)
 }
 
-fn get_log_url(task_id: &str, artifact: &Artifact) -> String {
+fn get_log_url(taskcluster_urls: &TaskclusterUrls, task_id: &str, artifact: &Artifact) -> String {
     let task_url = format!("task/{}/artifacts", task_id);
-    url(QUEUE_BASE, &format!("{}/{}", &task_url, artifact.name))
+    url(&taskcluster_urls.queue_base, &format!("{}/{}", &task_url, artifact.name))
 }
 
 fn download(client: &reqwest::Client, name: &Path, url: &str) {
@@ -304,6 +313,7 @@ fn download(client: &reqwest::Client, name: &Path, url: &str) {
 
 fn fetch_job_logs(
     client: &reqwest::Client,
+    taskcluster_urls: &TaskclusterUrls,
     out_dir: &Path,
     tasks: Vec<TaskGroupTask>,
     log_format: LogFormat,
@@ -322,12 +332,12 @@ fn fetch_job_logs(
             let dest = out_dir.join(&name);
             if !dest.exists() {
                 scope.execute(move || {
-                    let artifacts = get_artifacts(&client, &task_id).unwrap();
+                    let artifacts = get_artifacts(&client, &taskcluster_urls, &task_id).unwrap();
                     let artifact = artifacts
                         .iter()
                         .find(|&artifact| is_wpt_artifact(artifact, log_format));
                     if let Some(artifact) = artifact {
-                        let log_url = get_log_url(&task_id, &artifact);
+                        let log_url = get_log_url(&taskcluster_urls, &task_id, &artifact);
                         println!("Downloading {} to {}", log_url, dest.to_string_lossy());
                         download(&client, &dest, &log_url);
                     }
@@ -348,6 +358,25 @@ fn is_wpt_task(task: &TaskGroupTask) -> bool {
     name.contains("-web-platform-tests-") || name.starts_with("spidermonkey")
 }
 
+struct TaskclusterUrls {
+    index_base: String,
+    queue_base: String,
+}
+
+fn get_taskcluster_urls(taskcluster_base: &str) -> TaskclusterUrls {
+    if taskcluster_base == "https://taskcluster.net" {
+        TaskclusterUrls {
+            index_base: "https://index.taskcluster.net/v1/".into(),
+            queue_base: "https://queue.taskcluster.net/v1/".into(),
+        }
+    } else {
+        TaskclusterUrls {
+            index_base: format!("{}/api/index/v1/", taskcluster_base),
+            queue_base: format!("{}/api/queue/v1/", taskcluster_base),
+        }
+    }
+}
+
 fn wpt_complete<'a, I>(mut tasks: I) -> bool
 where
     I: Iterator<Item = &'a TaskGroupTask>,
@@ -359,7 +388,9 @@ fn run() -> Result<()> {
     let matches = parse_args().get_matches();
     let branch = matches.value_of("branch").unwrap();
     let commit = matches.value_of("commit").unwrap();
+    let taskcluster_base = matches.value_of("taskcluster_url").unwrap();
     let log_format = value_t_or_exit!(matches, "log_format", LogFormat);
+    let taskcluster_urls = get_taskcluster_urls(taskcluster_base);
 
     if !commit_is_valid(&commit) {
         return Err(Error::String(
@@ -380,9 +411,9 @@ fn run() -> Result<()> {
 
     let commit = get_revision(&client, &branch, &commit)?.node;
 
-    let taskgroup = get_taskgroup(&client, &branch, &commit)?;
+    let taskgroup = get_taskgroup(&client, &taskcluster_urls, &branch, &commit)?;
 
-    let tasks = get_taskgroup_tasks(&client, &taskgroup.taskId)?;
+    let tasks = get_taskgroup_tasks(&client, &taskcluster_urls, &taskgroup.taskId)?;
     let wpt_tasks: Vec<TaskGroupTask> = tasks.tasks.into_iter().filter(|task| is_wpt_task(task)).collect();
 
     if matches.is_present("check_complete") {
@@ -391,7 +422,7 @@ fn run() -> Result<()> {
         }
     }
 
-    fetch_job_logs(&client, &out_dir, wpt_tasks, log_format);
+    fetch_job_logs(&client, &taskcluster_urls, &out_dir, wpt_tasks, log_format);
     Ok(())
 }
 
