@@ -1,5 +1,5 @@
-#[macro_use]
 extern crate clap;
+extern crate regex;
 extern crate reqwest;
 extern crate scoped_threadpool;
 use serde::de::{DeserializeOwned};
@@ -9,19 +9,13 @@ extern crate serde_derive;
 extern crate serde_json;
 
 use clap::{App, Arg};
+use regex::Regex;
 use std::env;
 use std::fs::{rename, File};
 use std::io::{self, copy, BufWriter, Read};
 use std::path::{Path, PathBuf};
 use std::process;
 
-arg_enum! {
-    #[derive(Clone, Copy, Debug)]
-    enum LogFormat {
-        Raw,
-        WptReport,
-    }
-}
 
 fn parse_args<'a, 'b>() -> App<'a, 'b> {
     App::new("Treeherder log fetcher")
@@ -41,10 +35,9 @@ fn parse_args<'a, 'b>() -> App<'a, 'b> {
         .arg(
             Arg::with_name("log_format")
                 .long("--log-format")
-                .possible_values(&["raw", "wptreport"])
-                .default_value("wptreport")
+                .default_value("wptreport.json")
                 .takes_value(true)
-                .help("Log type to fetch. raw or wptreport"),
+                .help("Log filename to fetch"),
         )
         .arg(
             Arg::with_name("taskcluster_url")
@@ -52,6 +45,12 @@ fn parse_args<'a, 'b>() -> App<'a, 'b> {
                 .default_value("https://firefox-ci-tc.services.mozilla.com")
                 .takes_value(true)
                 .help("Base url of the taskcluster instance"),
+        )
+        .arg(
+            Arg::with_name("filter_re")
+                .long("--filter-jobs")
+                .takes_value(true)
+                .help("Regex to filter task names"),
         )
         .arg(
             Arg::with_name("branch")
@@ -128,6 +127,7 @@ struct Artifact {
 struct TaskGroupResponse {
     taskGroupId: String,
     tasks: Vec<TaskGroupTask>,
+    continuationToken: Option<String>
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,26 +214,16 @@ impl From<io::Error> for Error {
     }
 }
 
-impl LogFormat {
-    fn path_suffix(&self) -> String {
-        format!("/{}", self.file_name())
-    }
-
-    fn file_name(&self) -> &'static str {
-        match self {
-            LogFormat::Raw => "wpt_raw.log",
-            LogFormat::WptReport => "wptreport.json",
-        }
-    }
-}
-
-fn get_json<T>(client: &reqwest::Client, url: &str) -> Result<T>
+fn get_json<T>(client: &reqwest::Client, url: &str, query: Option<Vec<(String, String)>>) -> Result<T>
 where
     T: DeserializeOwned,
 {
     // TODO - If there's a list then support continuationToken
     println!("{}", url);
-    let req = client.get(url);
+    let mut req = client.get(url);
+    if let Some(query_params) = query {
+        req = req.query(&query_params);
+    }
     let mut resp = req.send()?;
     resp.error_for_status_ref()?;
     let mut resp_body = match resp.content_length() {
@@ -270,7 +260,7 @@ fn hg_path(branch: &str) -> &'static str {
 fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
     let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", hg_path(branch), commit);
 
-    Ok(get_json(client, &url_)?)
+    Ok(get_json(client, &url_, None)?)
 }
 
 fn get_taskgroup(
@@ -283,18 +273,29 @@ fn get_taskgroup(
     Ok(get_json(
         client,
         &url(&taskcluster_urls.index_base, &format!("task/{}", index)),
+        None,
     )?)
 }
 
-fn get_taskgroup_tasks(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, taskgroup_id: &str) -> Result<TaskGroupResponse> {
+fn get_taskgroup_tasks(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, taskgroup_id: &str) -> Result<Vec<TaskGroupTask>> {
     let url_suffix = format!("task-group/{}/list", taskgroup_id);
-
-    Ok(get_json(client, &url(&taskcluster_urls.queue_base, &url_suffix))?)
+    let mut tasks = Vec::new();
+    let mut continuation_token: Option<String> = None;
+    loop {
+        let query = continuation_token.map(|token| vec![("continuationToken".into(), token)]);
+        let data: TaskGroupResponse = get_json(client, &url(&taskcluster_urls.queue_base, &url_suffix), query)?;
+        tasks.extend(data.tasks);
+        if data.continuationToken.is_none() {
+            break;
+        }
+        continuation_token = data.continuationToken;
+    }
+    Ok(tasks)
 }
 
 fn get_artifacts(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, task_id: &str) -> Result<Vec<Artifact>> {
     let url_suffix = format!("task/{}/artifacts", task_id);
-    let artifacts: ArtifactsResponse = get_json(client, &*url(&taskcluster_urls.queue_base, &url_suffix))?;
+    let artifacts: ArtifactsResponse = get_json(client, &*url(&taskcluster_urls.queue_base, &url_suffix), None)?;
     Ok(artifacts.artifacts)
 }
 
@@ -316,7 +317,7 @@ fn fetch_job_logs(
     taskcluster_urls: &TaskclusterUrls,
     out_dir: &Path,
     tasks: Vec<TaskGroupTask>,
-    log_format: LogFormat,
+    log_format: &str,
 ) {
     let mut pool = scoped_threadpool::Pool::new(8);
     pool.scoped(|scope| {
@@ -327,7 +328,7 @@ fn fetch_job_logs(
                 "{}-{}-{}",
                 task.task.metadata.name.replace("/", "-"),
                 &task.status.taskId,
-                log_format.file_name()
+                log_format
             ));
             let dest = out_dir.join(&name);
             if !dest.exists() {
@@ -349,13 +350,16 @@ fn fetch_job_logs(
     })
 }
 
-fn is_wpt_artifact(artifact: &Artifact, format: LogFormat) -> bool {
-    return artifact.name.ends_with(&format.path_suffix());
+fn is_wpt_artifact(artifact: &Artifact, format: &str) -> bool {
+    return artifact.name.ends_with(&format);
 }
 
-fn is_wpt_task(task: &TaskGroupTask) -> bool {
+fn is_task(task: &TaskGroupTask, task_filter: Option<&Regex>) -> bool {
     let name = &task.task.metadata.name;
-    name.contains("-web-platform-tests-") || name.starts_with("spidermonkey")
+    ((name.contains("-web-platform-tests-") ||
+      name.starts_with("spidermonkey")) &&
+     (task_filter.is_none() ||
+      task_filter.unwrap().is_match(name)))
 }
 
 struct TaskclusterUrls {
@@ -389,8 +393,17 @@ fn run() -> Result<()> {
     let branch = matches.value_of("branch").unwrap();
     let commit = matches.value_of("commit").unwrap();
     let taskcluster_base = matches.value_of("taskcluster_url").unwrap();
-    let log_format = value_t_or_exit!(matches, "log_format", LogFormat);
+    let log_format = matches.value_of("log_format").unwrap();
     let taskcluster_urls = get_taskcluster_urls(taskcluster_base);
+    let filter_re_str = matches.value_of("filter_re");
+
+    let filter_re_result = filter_re_str.map(|x| Regex::new(x)).transpose();
+    if let Err(_) = filter_re_result {
+        return Err(Error::String(
+            format!("Filter `{}` can't be parsed as a regular expression",
+                    filter_re_str.unwrap())));
+    }
+    let task_filter = filter_re_result.unwrap();
 
     if !commit_is_valid(&commit) {
         return Err(Error::String(
@@ -414,7 +427,7 @@ fn run() -> Result<()> {
     let taskgroup = get_taskgroup(&client, &taskcluster_urls, &branch, &commit)?;
 
     let tasks = get_taskgroup_tasks(&client, &taskcluster_urls, &taskgroup.taskId)?;
-    let wpt_tasks: Vec<TaskGroupTask> = tasks.tasks.into_iter().filter(|task| is_wpt_task(task)).collect();
+    let wpt_tasks: Vec<TaskGroupTask> = tasks.into_iter().filter(|task| is_task(task, task_filter.as_ref())).collect();
 
     if matches.is_present("check_complete") {
         if !wpt_complete(wpt_tasks.iter()) {
