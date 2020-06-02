@@ -269,7 +269,7 @@ fn get_taskgroup(
     branch: &str,
     commit: &str,
 ) -> Result<IndexResponse> {
-    let index = format!("gecko.v2.{}.revision.{}.firefox.decision", branch, commit);
+    let index = format!("gecko.v2.{}.revision.{}.taskgraph.decision", branch, commit);
     Ok(get_json(
         client,
         &url(&taskcluster_urls.index_base, &format!("task/{}", index)),
