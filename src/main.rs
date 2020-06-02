@@ -333,14 +333,22 @@ fn fetch_job_logs(
             let dest = out_dir.join(&name);
             if !dest.exists() {
                 scope.execute(move || {
-                    let artifacts = get_artifacts(&client, &taskcluster_urls, &task_id).unwrap();
-                    let artifact = artifacts
-                        .iter()
-                        .find(|&artifact| is_wpt_artifact(artifact, log_format));
-                    if let Some(artifact) = artifact {
-                        let log_url = get_log_url(&taskcluster_urls, &task_id, &artifact);
-                        println!("Downloading {} to {}", log_url, dest.to_string_lossy());
-                        download(&client, &dest, &log_url);
+                    let artifacts = get_artifacts(&client, &taskcluster_urls, &task_id);
+                    match artifacts {
+                        Err(e) => {
+                            println!("{:?}", e);
+                            return
+                        },
+                        Ok(artifacts) => {
+                            let artifact = artifacts
+                                .iter()
+                                .find(|&artifact| is_wpt_artifact(artifact, log_format));
+                            if let Some(artifact) = artifact {
+                                let log_url = get_log_url(&taskcluster_urls, &task_id, &artifact);
+                                println!("Downloading {} to {}", log_url, dest.to_string_lossy());
+                                download(&client, &dest, &log_url);
+                            }
+                        }
                     }
                 });
             } else {
