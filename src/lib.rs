@@ -121,6 +121,19 @@ impl TaskFilter {
     }
 }
 
+fn get_ci(repo: &str, taskcluster_base: Option<&str>) -> Option<Box<dyn TaskclusterCI>> {
+    match repo {
+        "wpt" => Some(Box::new(ghwpt::GithubCI::new(taskcluster_base))),
+        _ => {
+            if let Some(ci) = hgmo::HgmoCI::for_repo(taskcluster_base, repo.into()) {
+                Some(Box::new(ci))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 pub fn download_artifacts(
     taskcluster_base: Option<&str>,
     repo: &str,
@@ -132,30 +145,14 @@ pub fn download_artifacts(
 ) -> Result<Vec<PathBuf>> {
     let client = reqwest::blocking::Client::new();
 
-    let (taskgroup, task_filters, default_artifact_name, taskcluster) = if repo == "wpt" {
-        let ci = ghwpt::GithubCI::new(taskcluster_base);
-        let task_filters = task_filters.unwrap_or_else(ghwpt::GithubCI::default_task_filter);
-        let taskgroup = ci.get_taskgroup(&client, commit)?;
-        (
-            taskgroup,
-            task_filters,
-            ghwpt::GithubCI::default_artifact_name(),
-            ci.into_taskcluster(),
-        )
-    } else {
-        let ci = hgmo::HgmoCI::for_repo(taskcluster_base, repo.into())
-            .ok_or_else(|| Error::String(format!("No such repository {}", repo)))?;
-        let task_filters = task_filters.unwrap_or_else(hgmo::HgmoCI::default_task_filter);
-        let taskgroup = ci.get_taskgroup(&client, commit)?;
-        (
-            taskgroup,
-            task_filters,
-            hgmo::HgmoCI::default_artifact_name(),
-            ci.into_taskcluster(),
-        )
-    };
+    let ci = get_ci(repo, taskcluster_base)
+        .ok_or_else(|| Error::String(format!("No such repo {}", repo)))?;
 
-    let tasks = taskcluster.get_taskgroup_tasks(&client, &taskgroup)?;
+    let task_filters = task_filters.unwrap_or_else(|| ci.default_task_filter());
+    let taskgroup = ci.get_taskgroup(&client, commit)?;
+    let artifact_name = artifact_name.unwrap_or_else(|| ci.default_artifact_name());
+
+    let tasks = ci.taskcluster().get_taskgroup_tasks(&client, &taskgroup)?;
     let tasks: Vec<TaskGroupTask> = tasks
         .into_iter()
         .filter(|task| include_task(task, &task_filters))
@@ -167,9 +164,9 @@ pub fn download_artifacts(
 
     Ok(fetch_job_logs(
         &client,
-        &taskcluster,
+        ci.taskcluster(),
         out_dir,
         tasks,
-        artifact_name.unwrap_or(default_artifact_name),
+        artifact_name,
     ))
 }

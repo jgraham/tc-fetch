@@ -70,16 +70,16 @@ fn commit_is_valid(commit: &str) -> bool {
 }
 
 impl TaskclusterCI for HgmoCI {
-    fn into_taskcluster(self) -> Taskcluster {
-        self.taskcluster
+    fn taskcluster(&self) -> &Taskcluster {
+        &self.taskcluster
     }
 
-    fn default_task_filter() -> Vec<TaskFilter> {
+    fn default_task_filter(&self) -> Vec<TaskFilter> {
         vec![TaskFilter::new("-web-platform-tests-|-spidermonkey-")
             .expect("Invalid default task filter")]
     }
 
-    fn default_artifact_name() -> &'static str {
+    fn default_artifact_name(&self) -> &'static str {
         "wptreport.json"
     }
 

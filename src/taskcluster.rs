@@ -4,10 +4,10 @@ use reqwest;
 use serde_derive::Deserialize;
 
 pub(crate) trait TaskclusterCI {
-    fn default_artifact_name() -> &'static str;
-    fn default_task_filter() -> Vec<TaskFilter>;
+    fn default_artifact_name(&self) -> &'static str;
+    fn default_task_filter(&self) -> Vec<TaskFilter>;
     fn get_taskgroup(&self, client: &reqwest::blocking::Client, commit: &str) -> Result<String>;
-    fn into_taskcluster(self) -> Taskcluster;
+    fn taskcluster(&self) -> &Taskcluster;
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
