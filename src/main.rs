@@ -1,455 +1,100 @@
-extern crate clap;
-extern crate regex;
-extern crate reqwest;
-extern crate scoped_threadpool;
-use serde::de::{DeserializeOwned};
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
-use clap::{App, Arg};
-use regex::Regex;
+use clap::{Arg, ArgAction, Command};
+use fetchlogs::{download_artifacts, Error, Result, TaskFilter};
 use std::env;
-use std::fs::{rename, File};
-use std::io::{self, copy, BufWriter, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
-
-fn parse_args<'a, 'b>() -> App<'a, 'b> {
-    App::new("Treeherder log fetcher")
+fn parse_args() -> Command {
+    Command::new("Taskcluster artifact fetcher")
         .arg(
-            Arg::with_name("check_complete")
-                .long("--check-complete")
+            Arg::new("check_complete")
+                .long("check-complete")
                 .required(false)
+                .action(ArgAction::SetTrue)
                 .help("Check if there are any pending wpt jobs and exit with code 1 if there are"),
         )
         .arg(
-            Arg::with_name("out_dir")
-                .long("--out-dir")
-                .takes_value(true)
+            Arg::new("out_dir")
+                .long("out-dir")
                 .required(false)
                 .help("Directory in which to put output files"),
         )
         .arg(
-            Arg::with_name("log_format")
-                .long("--log-format")
-                .default_value("wptreport.json")
-                .takes_value(true)
-                .help("Log filename to fetch"),
+            Arg::new("artifact_name")
+                .long("artifact_name")
+                .help("Artifact name to fetch"),
         )
         .arg(
-            Arg::with_name("taskcluster_url")
-                .long("--taskcluster-url")
-                .default_value("https://firefox-ci-tc.services.mozilla.com")
-                .takes_value(true)
+            Arg::new("taskcluster_url")
+                .long("taskcluster-url")
                 .help("Base url of the taskcluster instance"),
         )
         .arg(
-            Arg::with_name("filter_re")
-                .long("--filter-jobs")
-                .takes_value(true)
-                .help("Regex to filter task names"),
+            Arg::new("filter_re")
+                .long("filter-jobs")
+                .action(ArgAction::Append)
+                .help("Regex to filter task names. If this starts with ! then a matching task is excluded. If it start with ^ (after removing any !) the remaining regex is applied to the start of the task string, otherwise any prefix is allowed. Tasks must match all given filters."),
         )
         .arg(
-            Arg::with_name("branch")
+            Arg::new("repo")
                 .required(true)
                 .index(1)
-                .help("Branch on which jobs ran"),
+                .help("Repo in which jobs ran"),
         )
         .arg(
-            Arg::with_name("commit")
+            Arg::new("commit")
                 .required(true)
                 .index(2)
-                .help("Commit hash for push"),
+                .help("Commit hash"),
         )
-}
-
-#[derive(Debug, Deserialize)]
-struct RevisionResponse {
-    node: String,
-    desc: String,
-    user: String,
-    parents: Vec<String>,
-    phase: String,
-    pushid: u64,
-    pushuser: String,
-}
-
-#[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum TaskState {
-    Unscheduled,
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Exception,
-}
-
-impl TaskState {
-    fn is_complete(&self) -> bool {
-        match self {
-            TaskState::Unscheduled | TaskState::Pending | TaskState::Running => false,
-            TaskState::Completed | TaskState::Failed | TaskState::Exception => true,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct IndexResponse {
-    namespace: String,
-    taskId: String,
-    rank: u64,
-    expires: String
-}
-
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct ArtifactsResponse {
-    artifacts: Vec<Artifact>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct Artifact {
-    storageType: String,
-    name: String,
-    expires: String,
-    contentType: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct TaskGroupResponse {
-    taskGroupId: String,
-    tasks: Vec<TaskGroupTask>,
-    continuationToken: Option<String>
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct TaskGroupTask {
-    status: TaskGroupTaskStatus,
-    task: Task,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct TaskGroupTaskStatus {
-    taskId: String,
-    provisionerId: String,
-    workerType: String,
-    schedulerId: String,
-    taskGroupId: String,
-    deadline: String, // Should be a time type
-    expires: String,  // Should be a time type
-    retriesLeft: u64,
-    state: TaskState,
-    runs: Vec<TaskRun>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct TaskRun {
-    runId: u64,
-    state: TaskState,
-    reasonCreated: String,  // Should be an enum
-    reasonResolved: Option<String>, // Should be an enum
-    workerGroup: Option<String>,
-    workerId: Option<String>,
-    takenUntil: Option<String>, // Should be a time type
-    scheduled: Option<String>,  // Should be a time type
-    started: Option<String>,    // Should be a time type
-    resolved: Option<String>,   // Should be a time type
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct Task {
-    provisionerId: String,
-    workerType: String,
-    schedulerId: String,
-    taskGroupId: String,
-    metadata: TaskMetadata, // Blah
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct TaskMetadata {
-    owner: String,
-    source: String,
-    description: String,
-    name: String,
-}
-
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug)]
-enum Error {
-    Reqwest(reqwest::Error),
-    Serde(serde_json::Error),
-    Io(io::Error),
-    String(String)
-}
-
-impl From<reqwest::Error> for Error {
-    fn from(error: reqwest::Error) -> Error {
-        Error::Reqwest(error)
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(error: serde_json::Error) -> Error {
-        Error::Serde(error)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Error {
-        Error::Io(error)
-    }
-}
-
-fn get_json<T>(client: &reqwest::Client, url: &str, query: Option<Vec<(String, String)>>) -> Result<T>
-where
-    T: DeserializeOwned,
-{
-    // TODO - If there's a list then support continuationToken
-    println!("{}", url);
-    let mut req = client.get(url);
-    if let Some(query_params) = query {
-        req = req.query(&query_params);
-    }
-    let mut resp = req.send()?;
-    resp.error_for_status_ref()?;
-    let mut resp_body = match resp.content_length() {
-        Some(len) => String::with_capacity(len as usize),
-        None => String::new()
-    };
-    resp.read_to_string(&mut resp_body)?;
-    let data: T = serde_json::from_str(&resp_body)?;
-    Ok(data)
-}
-
-fn url(base: &str, path: &str) -> String {
-    format!("{}{}", base, path).into()
-}
-
-fn commit_is_valid(commit: &str) -> bool {
-    if commit.len() < 12 || commit.len() > 40 {
-        return false;
-    }
-    return true;
-}
-
-fn hg_path(branch: &str) -> &'static str {
-    match branch {
-        "try" => "try",
-        "mozilla-beta" => "releases/mozilla-beta",
-        "mozilla-central" => "mozilla-central",
-        "mozilla-inbound" => "integration/mozilla-inbound",
-        "autoland" => "integration/autoland",
-        _ => panic!(format!("Unknown branch {}", branch))
-    }
-}
-
-fn get_revision(client: &reqwest::Client, branch: &str, commit: &str) -> Result<RevisionResponse> {
-    let url_ = format!("https://hg.mozilla.org/{}/json-rev/{}", hg_path(branch), commit);
-
-    Ok(get_json(client, &url_, None)?)
-}
-
-fn get_taskgroup(
-    client: &reqwest::Client,
-    taskcluster_urls: &TaskclusterUrls,
-    branch: &str,
-    commit: &str,
-) -> Result<IndexResponse> {
-    let index = format!("gecko.v2.{}.revision.{}.taskgraph.decision", branch, commit);
-    Ok(get_json(
-        client,
-        &url(&taskcluster_urls.index_base, &format!("task/{}", index)),
-        None,
-    )?)
-}
-
-fn get_taskgroup_tasks(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, taskgroup_id: &str) -> Result<Vec<TaskGroupTask>> {
-    let url_suffix = format!("task-group/{}/list", taskgroup_id);
-    let mut tasks = Vec::new();
-    let mut continuation_token: Option<String> = None;
-    loop {
-        let query = continuation_token.map(|token| vec![("continuationToken".into(), token)]);
-        let data: TaskGroupResponse = get_json(client, &url(&taskcluster_urls.queue_base, &url_suffix), query)?;
-        tasks.extend(data.tasks);
-        if data.continuationToken.is_none() {
-            break;
-        }
-        continuation_token = data.continuationToken;
-    }
-    Ok(tasks)
-}
-
-fn get_artifacts(client: &reqwest::Client, taskcluster_urls: &TaskclusterUrls, task_id: &str) -> Result<Vec<Artifact>> {
-    let url_suffix = format!("task/{}/artifacts", task_id);
-    let artifacts: ArtifactsResponse = get_json(client, &*url(&taskcluster_urls.queue_base, &url_suffix), None)?;
-    Ok(artifacts.artifacts)
-}
-
-fn get_log_url(taskcluster_urls: &TaskclusterUrls, task_id: &str, artifact: &Artifact) -> String {
-    let task_url = format!("task/{}/artifacts", task_id);
-    url(&taskcluster_urls.queue_base, &format!("{}/{}", &task_url, artifact.name))
-}
-
-fn download(client: &reqwest::Client, name: &Path, url: &str) {
-    let tmp_name = name.with_extension("tmp");
-    let mut dest = BufWriter::new(File::create(&tmp_name).unwrap());
-    let mut resp = client.get(url).send().unwrap();
-    copy(&mut resp, &mut dest).unwrap();
-    rename(&tmp_name, name).unwrap();
-}
-
-fn fetch_job_logs(
-    client: &reqwest::Client,
-    taskcluster_urls: &TaskclusterUrls,
-    out_dir: &Path,
-    tasks: Vec<TaskGroupTask>,
-    log_format: &str,
-) {
-    let mut pool = scoped_threadpool::Pool::new(8);
-    pool.scoped(|scope| {
-        for task in tasks {
-            let task_id = task.status.taskId.clone();
-            let client = client.clone();
-            let name = PathBuf::from(format!(
-                "{}-{}-{}",
-                task.task.metadata.name.replace("/", "-"),
-                &task.status.taskId,
-                log_format
-            ));
-            let dest = out_dir.join(&name);
-            if !dest.exists() {
-                scope.execute(move || {
-                    let artifacts = get_artifacts(&client, &taskcluster_urls, &task_id);
-                    match artifacts {
-                        Err(e) => {
-                            println!("{:?}", e);
-                            return
-                        },
-                        Ok(artifacts) => {
-                            let artifact = artifacts
-                                .iter()
-                                .find(|&artifact| is_wpt_artifact(artifact, log_format));
-                            if let Some(artifact) = artifact {
-                                let log_url = get_log_url(&taskcluster_urls, &task_id, &artifact);
-                                println!("Downloading {} to {}", log_url, dest.to_string_lossy());
-                                download(&client, &dest, &log_url);
-                            }
-                        }
-                    }
-                });
-            } else {
-                println!("{} exists locally, skipping", dest.to_string_lossy());
-            }
-        }
-    })
-}
-
-fn is_wpt_artifact(artifact: &Artifact, format: &str) -> bool {
-    return artifact.name.ends_with(&format);
-}
-
-fn is_task(task: &TaskGroupTask, task_filter: Option<&Regex>) -> bool {
-    let name = &task.task.metadata.name;
-    ((name.contains("-web-platform-tests-") ||
-      name.starts_with("spidermonkey")) &&
-     (task_filter.is_none() ||
-      task_filter.unwrap().is_match(name)))
-}
-
-struct TaskclusterUrls {
-    index_base: String,
-    queue_base: String,
-}
-
-fn get_taskcluster_urls(taskcluster_base: &str) -> TaskclusterUrls {
-    if taskcluster_base == "https://taskcluster.net" {
-        TaskclusterUrls {
-            index_base: "https://index.taskcluster.net/v1/".into(),
-            queue_base: "https://queue.taskcluster.net/v1/".into(),
-        }
-    } else {
-        TaskclusterUrls {
-            index_base: format!("{}/api/index/v1/", taskcluster_base),
-            queue_base: format!("{}/api/queue/v1/", taskcluster_base),
-        }
-    }
-}
-
-fn wpt_complete<'a, I>(mut tasks: I) -> bool
-where
-    I: Iterator<Item = &'a TaskGroupTask>,
-{
-    tasks.all(|task| task.status.state.is_complete())
 }
 
 fn run() -> Result<()> {
     let matches = parse_args().get_matches();
-    let branch = matches.value_of("branch").unwrap();
-    let commit = matches.value_of("commit").unwrap();
-    let taskcluster_base = matches.value_of("taskcluster_url").unwrap();
-    let log_format = matches.value_of("log_format").unwrap();
-    let taskcluster_urls = get_taskcluster_urls(taskcluster_base);
-    let filter_re_str = matches.value_of("filter_re");
-
-    let filter_re_result = filter_re_str.map(|x| Regex::new(x)).transpose();
-    if let Err(_) = filter_re_result {
-        return Err(Error::String(
-            format!("Filter `{}` can't be parsed as a regular expression",
-                    filter_re_str.unwrap())));
-    }
-    let task_filter = filter_re_result.unwrap();
-
-    if !commit_is_valid(&commit) {
-        return Err(Error::String(
-            "Commit `{}` needs to be between 12 and 40 characters in length".into()))
-    }
+    let repo = matches.get_one::<String>("repo").unwrap();
+    let commit = matches.get_one::<String>("commit").unwrap();
+    let taskcluster_base = matches.get_one::<String>("taskcluster_url");
+    let artifact_name = matches.get_one::<String>("artifact_name");
+    let task_filter_strs = matches.get_many::<String>("filter_re");
+    let check_complete = matches.get_flag("check_complete");
 
     let cur_dir = env::current_dir().expect("Invalid working directory");
-    let out_dir: PathBuf = if let Some(dir) = matches.value_of("out_dir") {
+    let out_dir: PathBuf = if let Some(dir) = matches.get_one::<String>("out_dir") {
         cur_dir.join(dir)
     } else {
         cur_dir
     };
     if !out_dir.is_dir() {
-        return Err(Error::String(format!("{} is not a directory", out_dir.display())))
+        return Err(Error::String(format!(
+            "{} is not a directory",
+            out_dir.display()
+        )));
     }
 
-    let client = reqwest::Client::new();
+    let task_filters = task_filter_strs
+        .map(|filters| {
+            filters
+                .map(|filter| TaskFilter::new(filter))
+                .collect::<Result<Vec<TaskFilter>>>()
+        })
+        .transpose()?;
 
-    let commit = get_revision(&client, &branch, &commit)?.node;
+    download_artifacts(
+        taskcluster_base.map(|x| x.as_str()),
+        repo,
+        commit,
+        task_filters,
+        artifact_name.map(|x| x.as_str()),
+        check_complete,
+        &out_dir,
+    )?;
 
-    let taskgroup = get_taskgroup(&client, &taskcluster_urls, &branch, &commit)?;
-
-    let tasks = get_taskgroup_tasks(&client, &taskcluster_urls, &taskgroup.taskId)?;
-    let wpt_tasks: Vec<TaskGroupTask> = tasks.into_iter().filter(|task| is_task(task, task_filter.as_ref())).collect();
-
-    if matches.is_present("check_complete") {
-        if !wpt_complete(wpt_tasks.iter()) {
-            return Err(Error::String("wpt tasks are not yet complete".into()))
-        }
-    }
-
-    fetch_job_logs(&client, &taskcluster_urls, &out_dir, wpt_tasks, log_format);
     Ok(())
 }
 
 fn main() {
     match run() {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => {
             println!("{:?}", e);
             process::exit(1);

@@ -1,13 +1,23 @@
 [package]
 name = "fetchlogs"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
 readme = "readme.md"
+edition = "2021"
+
+[lib]
+name = "fetchlogs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fetchlogs"
+path = "src/main.rs"
 
 [dependencies]
-clap = "2"
+clap = "4"
 regex = "1"
-reqwest = "0.9"
+reqwest = {version="0.11", features=["blocking"]}
+thiserror = "1"
 scoped_threadpool = "0.1"
 serde = "1"
 serde_derive = "1"
