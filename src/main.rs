@@ -2,7 +2,6 @@ use clap::{Arg, ArgAction, Command};
 use fetchlogs::{download_artifacts, Error, Result, TaskFilter};
 use std::env;
 use std::path::PathBuf;
-use std::process;
 
 fn parse_args() -> Command {
     Command::new("Taskcluster artifact fetcher")
@@ -49,7 +48,7 @@ fn parse_args() -> Command {
         )
 }
 
-fn run() -> Result<()> {
+fn main() -> Result<()> {
     let matches = parse_args().get_matches();
     let repo = matches.get_one::<String>("repo").unwrap();
     let commit = matches.get_one::<String>("commit").unwrap();
@@ -90,14 +89,4 @@ fn run() -> Result<()> {
     )?;
 
     Ok(())
-}
-
-fn main() {
-    match run() {
-        Ok(()) => {}
-        Err(e) => {
-            println!("{:?}", e);
-            process::exit(1);
-        }
-    }
 }
