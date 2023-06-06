@@ -2,8 +2,10 @@
 name = "tc-fetch"
 version = "0.3.0"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
+description="Download taskcluster artifacts"
 readme = "README.md"
 edition = "2021"
+licesne = "BSD-3-Clause"
 
 [lib]
 name = "tcfetch"
