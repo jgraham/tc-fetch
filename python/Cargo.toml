@@ -10,4 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.18.3"
-tcfetch = {path = "../"}
+tc-fetch = {path = "../"}
