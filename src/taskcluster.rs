@@ -169,7 +169,6 @@ impl Taskcluster {
         let url_suffix = format!("task/{}/artifacts", task_id);
         let artifacts: ArtifactsResponse =
             get_json(client, &url(&self.queue_base, &url_suffix), None, None)?;
-        println!("artifacts {:?}", artifacts);
         Ok(artifacts.artifacts)
     }
 

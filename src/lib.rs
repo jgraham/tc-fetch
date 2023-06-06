@@ -49,7 +49,6 @@ fn fetch_job_logs(
                         return;
                     }
                 };
-                println!("{} {:?}", task_id, artifacts);
                 // TODO: this selects too many artifacts, should split on separator and check for an exact match
                 let artifact = artifacts
                     .iter()
@@ -116,7 +115,6 @@ impl TaskFilter {
         if self.invert {
             is_match = !is_match;
         }
-        println!("filter match {} {} {}", name, self.filter_re, is_match);
         is_match
     }
 }
