@@ -5,7 +5,7 @@ authors = ["James Graham <james@hoppipolla.co.uk>"]
 description="Download taskcluster artifacts"
 readme = "README.md"
 edition = "2021"
-licesne = "BSD-3-Clause"
+license = "BSD-3-Clause"
 
 [lib]
 name = "tcfetch"
