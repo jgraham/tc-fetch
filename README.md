@@ -15,7 +15,7 @@ CI](https://treeherder.mozilla.org) and
 tcfetch [--out-dir <path>] [--artifact-name <name>] [--filter-jobs <expression>]* <repo> <commit>
 ```
 
-By default fetchlogs is configured to fetch web-platform-tests results
+By default tcfetch is configured to fetch web-platform-tests results
 in wptreport format.
 
 Valid `repo` names are:
