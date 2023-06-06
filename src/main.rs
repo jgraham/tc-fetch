@@ -1,7 +1,7 @@
 use clap::{Arg, ArgAction, Command};
-use fetchlogs::{download_artifacts, Error, Result, TaskFilter};
 use std::env;
 use std::path::PathBuf;
+use tcfetch::{download_artifacts, Error, Result, TaskFilter};
 
 fn parse_args() -> Command {
     Command::new("Taskcluster artifact fetcher")

@@ -36,6 +36,7 @@ fn fetch_job_logs(
     let mut pool = scoped_threadpool::Pool::new(8);
     let paths = Arc::new(Mutex::new(Vec::with_capacity(tasks.len())));
 
+    // TODO: Convert this to async
     pool.scoped(|scope| {
         for task in tasks.iter() {
             scope.execute(|| {

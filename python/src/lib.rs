@@ -1,4 +1,4 @@
-extern crate fetchlogs as fetchlogs_rs;
+extern crate tcfetch as tcfetch_rs;
 use pyo3::exceptions::PyOSError;
 use pyo3::prelude::*;
 use std::env;
@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
-struct Error(fetchlogs_rs::Error);
+struct Error(tcfetch_rs::Error);
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -14,8 +14,8 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::convert::From<fetchlogs_rs::Error> for Error {
-    fn from(err: fetchlogs_rs::Error) -> Error {
+impl std::convert::From<tcfetch_rs::Error> for Error {
+    fn from(err: tcfetch_rs::Error) -> Error {
         Error(err)
     }
 }
@@ -44,7 +44,7 @@ fn download_artifacts(
         cur_dir
     };
     if !out_path.is_dir() {
-        return Err(Error::from(fetchlogs_rs::Error::String(format!(
+        return Err(Error::from(tcfetch_rs::Error::String(format!(
             "{} is not a directory",
             out_path.display()
         )))
@@ -56,13 +56,13 @@ fn download_artifacts(
             filters
                 .iter()
                 .map(|filter_str| {
-                    fetchlogs_rs::TaskFilter::new(filter_str).map_err(|err| Error::from(err))
+                    tcfetch_rs::TaskFilter::new(filter_str).map_err(|err| Error::from(err))
                 })
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
 
-    Ok(fetchlogs_rs::download_artifacts(
+    Ok(tcfetch_rs::download_artifacts(
         taskcluster_base,
         branch,
         commit,
@@ -76,7 +76,7 @@ fn download_artifacts(
 
 /// Download artifacts from Taskcluster.
 #[pymodule]
-fn fetchlogs(_py: Python, m: &PyModule) -> PyResult<()> {
+fn tcfetch(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(download_artifacts, m)?)?;
     Ok(())
 }

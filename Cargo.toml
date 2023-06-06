@@ -1,16 +1,16 @@
 [package]
-name = "fetchlogs"
+name = "tc-fetch"
 version = "0.3.0"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
-readme = "readme.md"
+readme = "README.md"
 edition = "2021"
 
 [lib]
-name = "fetchlogs"
+name = "tcfetch"
 path = "src/lib.rs"
 
 [[bin]]
-name = "fetchlogs"
+name = "tcfetch"
 path = "src/main.rs"
 
 [dependencies]
