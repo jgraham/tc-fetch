@@ -2,6 +2,10 @@
 name = "tcfetch"
 version = "0.3.0"
 edition = "2021"
+authors = ["James Graham <james@hoppipolla.co.uk>"]
+description="Download taskcluster artifacts"
+readme = "../README.md"
+license = "BSD-3-Clause"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
