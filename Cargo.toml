@@ -1,6 +1,6 @@
 [package]
 name = "tc-fetch"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
 description="Download taskcluster artifacts"
 readme = "README.md"
