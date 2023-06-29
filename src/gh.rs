@@ -160,7 +160,7 @@ pub fn get_checks(
             base_url,
             Some(query),
             Some(vec![
-                ("user-agent".to_string(), "tcfetch/0.3".to_string()),
+                ("user-agent".to_string(), "tcfetch/0.4".to_string()),
                 (
                     "Accept".to_string(),
                     "application/vnd.github+json".to_string(),
