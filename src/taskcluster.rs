@@ -6,7 +6,11 @@ use serde_derive::Deserialize;
 pub(crate) trait TaskclusterCI {
     fn default_artifact_name(&self) -> &'static str;
     fn default_task_filter(&self) -> Vec<TaskFilter>;
-    fn get_taskgroup(&self, client: &reqwest::blocking::Client, commit: &str) -> Result<String>;
+    fn get_taskgroups(
+        &self,
+        client: &reqwest::blocking::Client,
+        commit: &str,
+    ) -> Result<Vec<String>>;
     fn taskcluster(&self) -> &Taskcluster;
 }
 

@@ -83,7 +83,11 @@ impl TaskclusterCI for HgmoCI {
         "wptreport.json"
     }
 
-    fn get_taskgroup(&self, client: &reqwest::blocking::Client, commit: &str) -> Result<String> {
+    fn get_taskgroups(
+        &self,
+        client: &reqwest::blocking::Client,
+        commit: &str,
+    ) -> Result<Vec<String>> {
         if !commit_is_valid(commit) {
             return Err(Error::String(format!(
                 "Commit `{}` needs to be between 12 and 40 characters in length",
@@ -99,12 +103,14 @@ impl TaskclusterCI for HgmoCI {
             "gecko.v2.{}.revision.{}.taskgraph.decision",
             self.repo, commit
         );
-        Ok(get_json::<IndexResponse>(
-            client,
-            &url(&self.taskcluster.index_base, &format!("task/{}", index)),
-            None,
-            None,
-        )?
-        .taskId)
+        Ok(vec![
+            get_json::<IndexResponse>(
+                client,
+                &url(&self.taskcluster.index_base, &format!("task/{}", index)),
+                None,
+                None,
+            )?
+            .taskId,
+        ])
     }
 }

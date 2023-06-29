@@ -148,15 +148,17 @@ pub fn get_checks(
     while checks_total.is_none() || checks_total != Some(checks.len() as u64) {
         page += 1;
         let base_url = &url("https://api.github.com/", &url_suffix);
-        let query = if page > 1 {
-            Some(vec![("page".into(), page.to_string())])
-        } else {
-            None
-        };
+        let mut query = vec![
+            ("per_page".into(), "100".into()),
+            ("filter".into(), "all".into()),
+        ];
+        if page > 1 {
+            query.push(("page".into(), page.to_string()));
+        }
         let checks_resp: ChecksResponse = get_json(
             client,
             base_url,
-            query,
+            Some(query),
             Some(vec![
                 ("user-agent".to_string(), "tcfetch/0.3".to_string()),
                 (

@@ -29,14 +29,19 @@ impl TaskclusterCI for GithubCI {
         "wpt_report.json.gz"
     }
 
-    fn get_taskgroup(&self, client: &reqwest::blocking::Client, commit: &str) -> Result<String> {
+    fn get_taskgroups(
+        &self,
+        client: &reqwest::blocking::Client,
+        commit: &str,
+    ) -> Result<Vec<String>> {
         let check_runs = gh::get_checks(client, "web-platform-tests", "wpt", commit)?;
-        let mut task_name = None;
+        let mut task_names = vec![];
         for check in check_runs.iter() {
             if check.name == "wpt-decision-task" {
                 if let Some(ref details_url) = check.details_url {
-                    task_name = details_url.rsplit('/').next().map(|x| x.to_string());
-                    break;
+                    if let Some(task_name) = details_url.rsplit('/').next().map(|x| x.to_string()) {
+                        task_names.push(task_name.into());
+                    }
                 } else {
                     return Err(Error::String(
                         "No details_url for wpt-decision-task check; can't find taskgroup".into(),
@@ -44,6 +49,9 @@ impl TaskclusterCI for GithubCI {
                 }
             }
         }
-        task_name.ok_or_else(|| Error::String("Unable to find decision task".into()))
+        if task_names.is_empty() {
+            return Err(Error::String("Unable to find decision task".into()));
+        }
+        Ok(task_names)
     }
 }

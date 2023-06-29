@@ -148,10 +148,13 @@ pub fn download_artifacts(
         .ok_or_else(|| Error::String(format!("No such repo {}", repo)))?;
 
     let task_filters = task_filters.unwrap_or_else(|| ci.default_task_filter());
-    let taskgroup = ci.get_taskgroup(&client, commit)?;
+    let taskgroups = ci.get_taskgroups(&client, commit)?;
     let artifact_name = artifact_name.unwrap_or_else(|| ci.default_artifact_name());
 
-    let tasks = ci.taskcluster().get_taskgroup_tasks(&client, &taskgroup)?;
+    let mut tasks = Vec::new();
+    for taskgroup in taskgroups {
+        tasks.extend(ci.taskcluster().get_taskgroup_tasks(&client, &taskgroup)?)
+    }
     let tasks: Vec<TaskGroupTask> = tasks
         .into_iter()
         .filter(|task| include_task(task, &task_filters))
