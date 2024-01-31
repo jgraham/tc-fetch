@@ -17,6 +17,7 @@ pub struct Revision {
 fn hg_path(repo: &str) -> Option<&'static str> {
     match repo {
         "try" => Some("try"),
+        "mozilla-release" => Some("releases/mozilla-release"),
         "mozilla-beta" => Some("releases/mozilla-beta"),
         "mozilla-central" => Some("mozilla-central"),
         "mozilla-inbound" => Some("integration/mozilla-inbound"),
