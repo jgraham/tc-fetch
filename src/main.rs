@@ -20,7 +20,7 @@ fn parse_args() -> Command {
         )
         .arg(
             Arg::new("artifact_name")
-                .long("artifact_name")
+                .long("artifact-name")
                 .help("Artifact name to fetch"),
         )
         .arg(
