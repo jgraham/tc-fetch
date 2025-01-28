@@ -26,9 +26,26 @@ impl std::convert::From<Error> for PyErr {
     }
 }
 
+#[pyclass(frozen)]
+pub struct TaskDownloadData {
+    id: String,
+    name: String,
+    path: PathBuf,
+}
+
+impl TaskDownloadData {
+    fn from_download(task: tcfetch_rs::taskcluster::TaskGroupTask, download_path: PathBuf) -> Self {
+        TaskDownloadData {
+            id: task.status.taskId,
+            name: task.task.metadata.name,
+            path: download_path,
+        }
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (branch, commit, artifact_name=None, taskcluster_base=None, task_filters=None, check_complete=false, out_dir=None))]
-fn download_artifacts(
+pub fn download_artifacts(
     branch: &str,
     commit: &str,
     artifact_name: Option<&str>,
@@ -36,7 +53,7 @@ fn download_artifacts(
     task_filters: Option<Vec<&str>>,
     check_complete: bool,
     out_dir: Option<&str>,
-) -> PyResult<Vec<PathBuf>> {
+) -> PyResult<Vec<TaskDownloadData>> {
     let cur_dir = env::current_dir().expect("Invalid working directory");
     let out_path: PathBuf = if let Some(dir) = out_dir {
         cur_dir.join(dir)
@@ -71,7 +88,10 @@ fn download_artifacts(
         check_complete,
         &out_path,
     )
-    .map_err(|err| Error::from(err))?)
+    .map_err(|err| Error::from(err))?
+    .into_iter()
+    .map(|(task, path)| TaskDownloadData::from_download(task, path))
+    .collect())
 }
 
 /// Download artifacts from Taskcluster.

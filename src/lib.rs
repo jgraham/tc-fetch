@@ -32,13 +32,13 @@ fn fetch_job_logs(
     out_dir: &Path,
     tasks: Vec<TaskGroupTask>,
     artifact_name: &str,
-) -> Vec<PathBuf> {
+) -> Vec<(TaskGroupTask, PathBuf)> {
     let mut pool = scoped_threadpool::Pool::new(8);
     let paths = Arc::new(Mutex::new(Vec::with_capacity(tasks.len())));
 
     // TODO: Convert this to async
     pool.scoped(|scope| {
-        for task in tasks.iter() {
+        for task in tasks.into_iter() {
             scope.execute(|| {
                 let task_id = task.status.taskId.clone();
                 let client = client.clone();
@@ -72,7 +72,7 @@ fn fetch_job_logs(
                     }
                     {
                         let mut paths = paths.lock().unwrap();
-                        (*paths).push(dest);
+                        (*paths).push((task, dest));
                     }
                 }
             });
@@ -141,7 +141,7 @@ pub fn download_artifacts(
     artifact_name: Option<&str>,
     check_complete: bool,
     out_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<(TaskGroupTask, PathBuf)>> {
     let client = reqwest::blocking::Client::new();
 
     let ci = get_ci(repo, taskcluster_base)
