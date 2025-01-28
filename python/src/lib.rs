@@ -72,7 +72,7 @@ pub fn download_artifacts(
     commit: &str,
     artifact_name: Option<&str>,
     taskcluster_base: Option<&str>,
-    task_filters: Option<Vec<&str>>,
+    task_filters: Option<Vec<String>>,
     check_complete: bool,
     out_dir: Option<&str>,
 ) -> PyResult<Vec<TaskDownloadData>> {
@@ -116,7 +116,7 @@ pub fn download_artifacts(
 
 /// Download artifacts from Taskcluster.
 #[pymodule]
-fn tcfetch(_py: Python, m: &PyModule) -> PyResult<()> {
+fn tcfetch(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(download_artifacts, m)?)?;
     m.add_function(wrap_pyfunction!(check_complete, m)?)?;
     m.add_class::<TaskDownloadData>()?;
