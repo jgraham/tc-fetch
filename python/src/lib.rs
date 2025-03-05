@@ -66,7 +66,7 @@ pub fn check_complete(
 }
 
 #[pyfunction]
-#[pyo3(signature = (branch, commit, artifact_name=None, taskcluster_base=None, task_filters=None, check_complete=false, out_dir=None))]
+#[pyo3(signature = (branch, commit, artifact_name=None, taskcluster_base=None, task_filters=None, check_complete=false, out_dir=None, compress=false))]
 pub fn download_artifacts(
     branch: &str,
     commit: &str,
@@ -75,6 +75,7 @@ pub fn download_artifacts(
     task_filters: Option<Vec<String>>,
     check_complete: bool,
     out_dir: Option<&str>,
+    compress: bool,
 ) -> PyResult<Vec<TaskDownloadData>> {
     let cur_dir = env::current_dir().expect("Invalid working directory");
     let out_path: PathBuf = if let Some(dir) = out_dir {
@@ -107,6 +108,7 @@ pub fn download_artifacts(
         artifact_name,
         check_complete,
         &out_path,
+        compress,
     )
     .map_err(Error::from)?
     .into_iter()

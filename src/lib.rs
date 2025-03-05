@@ -32,6 +32,7 @@ fn fetch_job_logs(
     out_dir: &Path,
     tasks: Vec<TaskGroupTask>,
     artifact_name: &str,
+    compress: bool,
 ) -> Vec<(TaskGroupTask, PathBuf)> {
     let mut pool = scoped_threadpool::Pool::new(8);
     let paths = Arc::new(Mutex::new(Vec::with_capacity(tasks.len())));
@@ -68,7 +69,7 @@ fn fetch_job_logs(
                     } else {
                         let log_url = taskcluster.get_log_url(&task_id, artifact);
                         println!("Downloading {} to {}", log_url, dest.to_string_lossy());
-                        download(&client, &dest, &log_url);
+                        download(&client, &dest, &log_url, compress);
                     }
                     {
                         let mut paths = paths.lock().unwrap();
@@ -153,6 +154,7 @@ pub fn download_artifacts(
     artifact_name: Option<&str>,
     check_complete: bool,
     out_dir: &Path,
+    compress: bool,
 ) -> Result<Vec<(TaskGroupTask, PathBuf)>> {
     let client = reqwest::blocking::Client::new();
 
@@ -182,5 +184,6 @@ pub fn download_artifacts(
         out_dir,
         tasks,
         artifact_name,
+        compress,
     ))
 }

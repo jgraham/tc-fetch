@@ -17,4 +17,5 @@ def download_artifacts(
     task_filters: Optional[str] = None,
     check_complete: bool = False,
     out_dir: Optional[str] = None,
+    compress: bool = False
 ) -> list[TaskDownloadData]: ...

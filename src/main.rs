@@ -13,6 +13,13 @@ fn parse_args() -> Command {
                 .help("Check if there are any pending wpt jobs and exit with code 1 if there are"),
         )
         .arg(
+            Arg::new("compress")
+                .long("compress")
+                .required(false)
+                .action(ArgAction::SetTrue)
+                .help("Compress output as zstd"),
+        )
+        .arg(
             Arg::new("out_dir")
                 .long("out-dir")
                 .required(false)
@@ -56,6 +63,7 @@ fn main() -> Result<()> {
     let artifact_name = matches.get_one::<String>("artifact_name");
     let task_filter_strs = matches.get_many::<String>("filter_re");
     let check_complete = matches.get_flag("check_complete");
+    let compress = matches.get_flag("compress");
 
     let cur_dir = env::current_dir().expect("Invalid working directory");
     let out_dir: PathBuf = if let Some(dir) = matches.get_one::<String>("out_dir") {
@@ -86,6 +94,7 @@ fn main() -> Result<()> {
         artifact_name.map(|x| x.as_str()),
         check_complete,
         &out_dir,
+        compress,
     )?;
 
     Ok(())

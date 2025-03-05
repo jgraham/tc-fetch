@@ -38,10 +38,19 @@ pub fn url(base: &str, path: &str) -> String {
     format!("{}{}", base, path)
 }
 
-pub fn download(client: &reqwest::blocking::Client, name: &Path, url: &str) {
-    let tmp_name = name.with_extension("tmp");
+pub fn download(client: &reqwest::blocking::Client, name: &Path, url: &str, compress: bool) {
+    let final_name = if compress {
+        name.with_extension(".zstd")
+    } else {
+        name.into()
+    };
+    let tmp_name = final_name.with_extension("tmp");
     let mut dest = BufWriter::new(File::create(&tmp_name).unwrap());
     let mut resp = client.get(url).send().unwrap();
-    copy(&mut resp, &mut dest).unwrap();
-    rename(&tmp_name, name).unwrap();
+    if compress {
+        zstd::stream::copy_encode(&mut resp, &mut dest, 0).unwrap();
+    } else {
+        copy(&mut resp, &mut dest).unwrap();
+    }
+    rename(&tmp_name, final_name).unwrap();
 }
