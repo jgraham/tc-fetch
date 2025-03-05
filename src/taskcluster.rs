@@ -2,6 +2,7 @@ use crate::utils::{get_json, url};
 use crate::{Result, TaskFilter};
 use reqwest;
 use serde_derive::Deserialize;
+use std::collections::BTreeMap;
 
 pub(crate) trait TaskclusterCI {
     fn default_artifact_name(&self) -> &'static str;
@@ -111,6 +112,8 @@ pub struct Task {
     pub schedulerId: String,
     pub taskGroupId: String,
     pub metadata: TaskMetadata,
+    #[serde(default)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

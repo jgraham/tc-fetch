@@ -28,9 +28,14 @@ impl std::convert::From<Error> for PyErr {
 
 #[pyclass(frozen)]
 pub struct TaskDownloadData {
-    id: String,
-    name: String,
-    path: PathBuf,
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub path: PathBuf,
+    #[pyo3(get)]
+    pub run_id: Option<String>,
 }
 
 impl TaskDownloadData {
@@ -39,6 +44,13 @@ impl TaskDownloadData {
             id: task.status.taskId,
             name: task.task.metadata.name,
             path: download_path,
+            run_id: task
+                .task
+                .extra
+                .get("test-setting")
+                .and_then(|x| x.get("_hash"))
+                .and_then(|x| x.as_str())
+                .map(|x| x.to_owned()),
         }
     }
 }
@@ -98,5 +110,6 @@ pub fn download_artifacts(
 #[pymodule]
 fn tcfetch(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(download_artifacts, m)?)?;
+    m.add_class::<TaskDownloadData>()?;
     Ok(())
 }
