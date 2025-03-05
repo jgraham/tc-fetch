@@ -1,6 +1,6 @@
 [package]
 name = "tcfetch"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["James Graham <james@hoppipolla.co.uk>"]
 description="Download taskcluster artifacts"
