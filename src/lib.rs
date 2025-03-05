@@ -133,6 +133,18 @@ fn get_ci(repo: &str, taskcluster_base: Option<&str>) -> Option<Box<dyn Taskclus
     }
 }
 
+pub fn check_complete(taskcluster_base: Option<&str>, repo: &str, commit: &str) -> Result<bool> {
+    let client = reqwest::blocking::Client::new();
+    let ci = get_ci(repo, taskcluster_base)
+        .ok_or_else(|| Error::String(format!("No such repo {}", repo)))?;
+    let taskgroups = ci.get_taskgroups(&client, commit)?;
+    let mut tasks = Vec::new();
+    for taskgroup in taskgroups {
+        tasks.extend(ci.taskcluster().get_taskgroup_tasks(&client, &taskgroup)?)
+    }
+    Ok(tasks_complete(tasks.iter()))
+}
+
 pub fn download_artifacts(
     taskcluster_base: Option<&str>,
     repo: &str,

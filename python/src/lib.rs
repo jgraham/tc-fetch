@@ -56,6 +56,16 @@ impl TaskDownloadData {
 }
 
 #[pyfunction]
+#[pyo3(signature = (branch, commit, taskcluster_base=None))]
+pub fn check_complete(
+    branch: &str,
+    commit: &str,
+    taskcluster_base: Option<&str>,
+) -> PyResult<bool> {
+    Ok(tcfetch_rs::check_complete(taskcluster_base, branch, commit).map_err(Error::from)?)
+}
+
+#[pyfunction]
 #[pyo3(signature = (branch, commit, artifact_name=None, taskcluster_base=None, task_filters=None, check_complete=false, out_dir=None))]
 pub fn download_artifacts(
     branch: &str,
@@ -110,6 +120,7 @@ pub fn download_artifacts(
 #[pymodule]
 fn tcfetch(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(download_artifacts, m)?)?;
+    m.add_function(wrap_pyfunction!(check_complete, m)?)?;
     m.add_class::<TaskDownloadData>()?;
     Ok(())
 }
