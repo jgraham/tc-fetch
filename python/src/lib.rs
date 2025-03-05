@@ -94,9 +94,7 @@ pub fn download_artifacts(
         .map(|filters| {
             filters
                 .iter()
-                .map(|filter_str| {
-                    tcfetch_rs::TaskFilter::new(filter_str).map_err(|err| Error::from(err))
-                })
+                .map(|filter_str| tcfetch_rs::TaskFilter::new(filter_str).map_err(Error::from))
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
@@ -110,7 +108,7 @@ pub fn download_artifacts(
         check_complete,
         &out_path,
     )
-    .map_err(|err| Error::from(err))?
+    .map_err(Error::from)?
     .into_iter()
     .map(|(task, path)| TaskDownloadData::from_download(task, path))
     .collect())

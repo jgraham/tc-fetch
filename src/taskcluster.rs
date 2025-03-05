@@ -144,9 +144,7 @@ impl Taskcluster {
             }
         }
     }
-}
 
-impl Taskcluster {
     pub fn get_taskgroup_tasks(
         &self,
         client: &reqwest::blocking::Client,
