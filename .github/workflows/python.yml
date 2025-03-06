@@ -22,7 +22,6 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
-        target: [x86_64, x86]
         platform:
           - runner: ubuntu-22.04
             target: x86_64
@@ -138,7 +137,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist
+          args: --out dist -m python/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
