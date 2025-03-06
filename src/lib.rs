@@ -56,11 +56,14 @@ fn fetch_job_logs(
                     .iter()
                     .find(|&artifact| artifact.name.ends_with(artifact_name));
                 if let Some(artifact) = artifact {
+                    let ext = if compress { ".zstd" } else { "" };
+
                     let name = PathBuf::from(format!(
-                        "{}-{}-{}",
+                        "{}-{}-{}{}",
                         task.task.metadata.name.replace('/', "-"),
                         &task.status.taskId,
-                        artifact_name
+                        artifact_name,
+                        ext
                     ));
                     let dest = out_dir.join(name);
 
@@ -68,6 +71,7 @@ fn fetch_job_logs(
                         println!("{} exists locally, skipping", dest.to_string_lossy());
                     } else {
                         let log_url = taskcluster.get_log_url(&task_id, artifact);
+
                         println!("Downloading {} to {}", log_url, dest.to_string_lossy());
                         download(&client, &dest, &log_url, compress);
                     }
