@@ -38,14 +38,26 @@ pub fn url(base: &str, path: &str) -> String {
     format!("{}{}", base, path)
 }
 
-pub fn download(client: &reqwest::blocking::Client, name: &Path, url: &str, compress: bool) {
+pub fn download(
+    client: &reqwest::blocking::Client,
+    name: &Path,
+    url: &str,
+    compress: bool,
+) -> bool {
     let tmp_name = name.with_extension("tmp");
     let mut dest = BufWriter::new(File::create(&tmp_name).unwrap());
-    let mut resp = client.get(url).send().unwrap();
-    if compress {
-        zstd::stream::copy_encode(&mut resp, &mut dest, 0).unwrap();
+    if let Ok(mut resp) = client.get(url).send() {
+        if compress {
+            zstd::stream::copy_encode(&mut resp, &mut dest, 0).unwrap();
+        } else {
+            copy(&mut resp, &mut dest).unwrap();
+        }
+        rename(&tmp_name, name).unwrap();
+        true
     } else {
-        copy(&mut resp, &mut dest).unwrap();
+        if tmp_name.exists() {
+            std::fs::remove_file(tmp_name).unwrap();
+        }
+        false
     }
-    rename(&tmp_name, name).unwrap();
 }

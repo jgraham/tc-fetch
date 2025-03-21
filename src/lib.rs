@@ -4,6 +4,7 @@ mod hgmo;
 pub mod taskcluster;
 mod utils;
 
+use log::{error, info};
 use regex::Regex;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -47,7 +48,7 @@ fn fetch_job_logs(
                 let artifacts = match taskcluster.get_artifacts(&client, &task_id) {
                     Ok(x) => x,
                     Err(err) => {
-                        eprintln!("{}", err);
+                        error!("{}", err);
                         return;
                     }
                 };
@@ -68,12 +69,14 @@ fn fetch_job_logs(
                     let dest = out_dir.join(name);
 
                     if dest.exists() {
-                        println!("{} exists locally, skipping", dest.to_string_lossy());
+                        info!("{} exists locally, skipping", dest.to_string_lossy());
                     } else {
                         let log_url = taskcluster.get_log_url(&task_id, artifact);
 
-                        println!("Downloading {} to {}", log_url, dest.to_string_lossy());
-                        download(&client, &dest, &log_url, compress);
+                        info!("Downloading {} to {}", log_url, dest.to_string_lossy());
+                        if !download(&client, &dest, &log_url, compress) {
+                            error!("Downloading {} failed", { log_url })
+                        }
                     }
                     {
                         let mut paths = paths.lock().unwrap();
@@ -180,6 +183,10 @@ pub fn download_artifacts(
 
     if check_complete && !tasks_complete(tasks.iter()) {
         return Err(Error::String("wpt tasks are not yet complete".into()));
+    }
+
+    if tasks.is_empty() {
+        return Err(Error::String("No matching tasks found".into()));
     }
 
     Ok(fetch_job_logs(

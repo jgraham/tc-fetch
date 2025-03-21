@@ -1,4 +1,5 @@
 use clap::{Arg, ArgAction, Command};
+use log::error;
 use std::env;
 use std::path::PathBuf;
 use tcfetch::{download_artifacts, Error, Result, TaskFilter};
@@ -55,7 +56,9 @@ fn parse_args() -> Command {
         )
 }
 
-fn main() -> Result<()> {
+fn run() -> Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     let matches = parse_args().get_matches();
     let repo = matches.get_one::<String>("repo").unwrap();
     let commit = matches.get_one::<String>("commit").unwrap();
@@ -97,10 +100,21 @@ fn main() -> Result<()> {
         compress,
     )?;
     if downloaded.is_empty() {
-        println!(
-            "No logs found (consider --artifact-name if you aren't downloading wptreport logs)"
-        );
+        let suffix = if artifact_name.is_none() {
+            " (consider --artifact-name if you aren't downloading wptreport logs)"
+        } else {
+            ""
+        };
+        error!("No logs found{}", suffix);
     }
 
     Ok(())
+}
+
+fn main() -> Result<()> {
+    let result = run();
+    if let Err(ref error) = result {
+        error!("{}", error);
+    }
+    result
 }
