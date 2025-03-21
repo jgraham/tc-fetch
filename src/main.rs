@@ -28,7 +28,7 @@ fn parse_args() -> Command {
         .arg(
             Arg::new("artifact_name")
                 .long("artifact-name")
-                .help("Artifact name to fetch"),
+                .help("Artifact name to fetch (defaults to wptreport artifact)"),
         )
         .arg(
             Arg::new("taskcluster_url")
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
         })
         .transpose()?;
 
-    download_artifacts(
+    let downloaded = download_artifacts(
         taskcluster_base.map(|x| x.as_str()),
         repo,
         commit,
@@ -96,6 +96,11 @@ fn main() -> Result<()> {
         &out_dir,
         compress,
     )?;
+    if downloaded.is_empty() {
+        println!(
+            "No logs found (consider --artifact-name if you aren't downloading wptreport logs)"
+        );
+    }
 
     Ok(())
 }
