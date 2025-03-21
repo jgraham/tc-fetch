@@ -40,7 +40,7 @@ impl TaskclusterCI for GithubCI {
             if check.name == "wpt-decision-task" {
                 if let Some(ref details_url) = check.details_url {
                     if let Some(task_name) = details_url.rsplit('/').next().map(|x| x.to_string()) {
-                        task_names.push(task_name.into());
+                        task_names.push(task_name);
                     }
                 } else {
                     return Err(Error::String(
